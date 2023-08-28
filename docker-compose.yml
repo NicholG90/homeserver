@@ -1,0 +1,662 @@
+version: "3.8"
+
+########################### SERVICES
+services:
+
+  ############################# FRONTENDS
+
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}
+      - CF_API_KEY=${CF_API_KEY}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ~/docker/traefik/data/traefik.yml:/traefik.yml:ro
+      - ~/docker/traefik/data/acme.json:/acme.json
+      - ~/docker/traefik/data/config.yml:/config.yml:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=http"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.traefik-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.routers.traefik.middlewares=traefik-https-redirect"
+      - "traefik.http.routers.traefik-secure.entrypoints=https"
+      - "traefik.http.routers.traefik-secure.rule=Host(`traefik.server.nicholgourlay.com`)"
+      - "traefik.http.routers.traefik-secure.tls=true"
+      - "traefik.http.routers.traefik-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.traefik-secure.tls.domains[0].main=server.nicholgourlay.com"
+      - "traefik.http.routers.traefik-secure.tls.domains[0].sans=*.server.nicholgourlay.com"
+      - "traefik.http.routers.traefik-secure.service=api@internal"
+
+  # Portainer - Container Management
+  portainer:
+    image: portainer/portainer-ee:latest
+    container_name: portainer
+    hostname: portainer
+    restart: unless-stopped
+    ports:
+      - 9000:9000
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/docker/portainer/data:/data
+    environment:
+      TZ: ${TZ}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.entrypoints=http"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.portainer-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.portainer.middlewares=portainer-https-redirect"
+      - "traefik.http.routers.portainer-secure.entrypoints=https"
+      - "traefik.http.routers.portainer-secure.rule=Host(`portainer.server.nicholgourlay.com`)"
+      - "traefik.http.routers.portainer-secure.tls=true"
+      - "traefik.http.routers.portainer-secure.service=portainer"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  ############################# SMART HOME
+
+  # Mosquitto - MQTT Broker
+  # Create mosquitto.conf, passwd, mosquitto.log files and set permissions to 775 user:docker
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: mosquitto
+    hostname: mosquitto
+    restart: unless-stopped
+    ports:
+      - 1883:1883 #http
+      - 9001:9001 #websockets
+      - 8883:8883 #https
+    volumes:
+      - ~/docker/mosquitto/config/:/mosquitto/config/
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+
+  nodered:
+    container_name: nodered
+    restart: unless-stopped
+    image: nodered/node-red:latest
+    user: root
+    ports:
+      - 1880:1880
+    volumes:
+      - ~/docker/nodered:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nodered.entrypoints=http"
+      - "traefik.http.routers.nodered.rule=Host(`nodered.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.nodered-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.nodered.middlewares=nodered-https-redirect"
+      - "traefik.http.routers.nodered-secure.entrypoints=https"
+      - "traefik.http.routers.nodered-secure.rule=Host(`nodered.server.nicholgourlay.com`)"
+      - "traefik.http.routers.nodered-secure.tls=true"
+      - "traefik.http.routers.nodered-secure.service=nodered"
+      - "traefik.http.services.nodered.loadbalancer.server.port=1880"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  zwavejs2mqtt:
+    container_name: zwavejs2mqtt
+    image: zwavejs/zwavejs2mqtt:latest
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    volumes:
+      - ~/docker/zwavejs:/usr/src/app/store
+    ports:
+      - 8091:8091 # port for web interface
+      - 3000:3000 # port for zwave-js websocket server
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.zwavejs2mqtt.entrypoints=http"
+      - "traefik.http.routers.zwavejs2mqtt.rule=Host(`zwave.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.zwavejs2mqtt-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.zwavejs2mqtt.middlewares=nodered-https-redirect"
+      - "traefik.http.routers.zwavejs2mqtt-secure.entrypoints=https"
+      - "traefik.http.routers.zwavejs2mqtt-secure.rule=Host(`zwave.server.nicholgourlay.com`)"
+      - "traefik.http.routers.zwavejs2mqtt-secure.tls=true"
+      - "traefik.http.routers.zwavejs2mqtt-secure.service=zwavejs2mqtt"
+      - "traefik.http.services.zwavejs2mqtt.loadbalancer.server.port=8091"
+
+  ############################# DOWNLOADERS
+
+  # Sabnzbd - Usenet Client
+  sabnzbd:
+    hostname: sabnzbd
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ~/docker/sabnzbd:/config
+      - /mnt/storage/downloads:/downloads #optional
+      - ~/docker/downloads:/incomplete-downloads #optional
+    ports:
+      - 8080:8080
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sab.entrypoints=http"
+      - "traefik.http.routers.sab.rule=Host(`sab.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.sab-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.sab.middlewares=sab-https-redirect"
+      - "traefik.http.routers.sab-secure.entrypoints=https"
+      - "traefik.http.routers.sab-secure.rule=Host(`sab.server.nicholgourlay.com`)"
+      - "traefik.http.routers.sab-secure.tls=true"
+      - "traefik.http.routers.sab-secure.service=sab"
+      - "traefik.http.services.sab.loadbalancer.server.port=8080"
+
+  # Transmission - Torrent Client
+  transmission:
+    image: haugene/transmission-openvpn:latest
+    container_name: transmission
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    restart: always
+    ports:
+      - 9091:9091
+      - 8888:8888
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /mnt/storage/downloads/torrents:/downloads/
+      - ~/docker/transmission:/data
+    environment:
+      - OPENVPN_PROVIDER=NORDVPN
+      - OPENVPN_USERNAME=${OPENVPN_USERNAME}
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
+      - OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60 --mute-replay-warnings
+      - NORDVPN_COUNTRY=CA
+      - LOCAL_NETWORK=192.168.2.0/24
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - TRANSMISSION_RPC_AUTHENTICATION_REQUIRED=true
+      - TRANSMISSION_RPC_ENABLED=true
+      - TRANSMISSION_RPC_PASSWORD=${TRANSMISSION_RPC_PASSWORD}
+      - TRANSMISSION_RPC_USERNAME=NicholG90
+      - TRANSMISSION_DOWNLOAD_DIR=/downloads/completed
+      - TRANSMISSION_INCOMPLETE_DIR=/downloads/incomplete
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.transmission.entrypoints=http"
+      - "traefik.http.routers.transmission.rule=Host(`transmission.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.transmission-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.transmission.middlewares=transmission-https-redirect"
+      - "traefik.http.routers.transmission-secure.entrypoints=https"
+      - "traefik.http.routers.transmission-secure.rule=Host(`transmission.server.nicholgourlay.com`)"
+      - "traefik.http.routers.transmission-secure.tls=true"
+      - "traefik.http.routers.transmission-secure.service=transmission"
+      - "traefik.http.services.transmission.loadbalancer.server.port=9091"
+
+  ############################# PVRS
+
+  # Radarr - Movie management
+  radarr:
+    image: ghcr.io/linuxserver/radarr:latest
+    container_name: radarr
+    hostname: radarr
+    restart: unless-stopped
+    ports:
+      - 7878:7878
+    volumes:
+      - ~/docker/radarr:/config
+      - /mnt/storage/downloads:/downloads
+      - /mnt/storage/movies:/movie
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.radarr.entrypoints=http"
+      - "traefik.http.routers.radarr.rule=Host(`radarr.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.radarr-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.radarr.middlewares=radarr-https-redirect"
+      - "traefik.http.routers.radarr-secure.entrypoints=https"
+      - "traefik.http.routers.radarr-secure.rule=Host(`radarr.server.nicholgourlay.com`)"
+      - "traefik.http.routers.radarr-secure.tls=true"
+      - "traefik.http.routers.radarr-secure.service=radarr"
+      - "traefik.http.services.radarr.loadbalancer.server.port=7878"
+
+  # Radarr 4K - Movie management
+  radarr4k:
+    image: ghcr.io/linuxserver/radarr:latest
+    container_name: radarr4k
+    hostname: radarr4k
+    restart: unless-stopped
+    ports:
+      - 7879:7879
+    volumes:
+      - ~/docker/radarr4k:/config
+      - /mnt/storage/downloads:/downloads
+      - /mnt/storage/4k:/movie
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.radarr4k.entrypoints=http"
+      - "traefik.http.routers.radarr4k.rule=Host(`radarr4k.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.radarr4k-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.radarr4k.middlewares=radarr4k-https-redirect"
+      - "traefik.http.routers.radarr4k-secure.entrypoints=https"
+      - "traefik.http.routers.radarr4k-secure.rule=Host(`radarr4k.server.nicholgourlay.com`)"
+      - "traefik.http.routers.radarr4k-secure.tls=true"
+      - "traefik.http.routers.radarr4k-secure.service=radarr4k"
+      - "traefik.http.services.radarr4k.loadbalancer.server.port=7879"
+
+  # Sonarr - TV Shows management
+  sonarr:
+    image: ghcr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    hostname: sonarr
+    restart: unless-stopped
+    ports:
+      - 8989:8989
+    volumes:
+      - ~/docker/sonarr:/config
+      - /mnt/storage/downloads:/downloads
+      - /mnt/storage/television:/television
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sonarr.entrypoints=http"
+      - "traefik.http.routers.sonarr.rule=Host(`sonarr.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.sonarr-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.sonarr.middlewares=sonarr-https-redirect"
+      - "traefik.http.routers.sonarr-secure.entrypoints=https"
+      - "traefik.http.routers.sonarr-secure.rule=Host(`sonarr.server.nicholgourlay.com`)"
+      - "traefik.http.routers.sonarr-secure.tls=true"
+      - "traefik.http.routers.sonarr-secure.service=sonarr"
+      - "traefik.http.services.sonarr.loadbalancer.server.port=8989"
+
+  # MeTube - Youtube-DL
+  metube:
+    image: alexta69/metube
+    container_name: metube
+    restart: unless-stopped
+    ports:
+      - 8081:8081
+    volumes:
+      - ~/docker/metube:/downloads
+
+  ############################# MEDIA
+
+  # Plex - Media Server
+  # For some reason you may need to add https://plex.nicholgourlay.com:443 back to Custom server access URLs in Plex settings on docker rebuild
+  plex:
+    image: plexinc/pms-docker:public
+    container_name: plex
+    hostname: plex
+    restart: unless-stopped
+#    deploy:
+#     resources:
+#       reservations:
+#         devices:
+#           - driver: nvidia
+#             count: all
+#             capabilities: [ gpu ]
+    volumes:
+      - ~/docker/plex:/config
+      - /mnt/storage:/media
+      - ~/docker/plex/transcode:/transcode
+    ports:
+      - 32400:32400
+    environment:
+      TZ: ${TZ}
+      HOSTNAME: plex
+      PLEX_CLAIM: claim-QgTYUUzxx1Foop_GX5Ew
+      PLEX_UID: ${PUID}
+      PLEX_GID: ${PGID}
+      ADVERTISE_IP: http://192.168.1.10:32400/
+ #     NVIDIA_VISIBLE_DEVICES: all
+ #    NVIDIA_DRIVER_CAPABILITIES: all
+
+  # Tautulli - Plex statistics and monitoring
+  tautulli:
+    image: ghcr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    hostname: tautulli
+    restart: unless-stopped
+    ports:
+      - 8181:8181
+    volumes:
+      - ~/docker/tautulli/config:/config
+      - ~/docker/tautulli/logs:/logs:ro
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tautulli.entrypoints=http"
+      - "traefik.http.routers.tautulli.rule=Host(`tautulli.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.tautulli-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.tautulli.middlewares=tautulli-https-redirect"
+      - "traefik.http.routers.tautulli-secure.entrypoints=https"
+      - "traefik.http.routers.tautulli-secure.rule=Host(`tautulli.server.nicholgourlay.com`)"
+      - "traefik.http.routers.tautulli-secure.tls=true"
+      - "traefik.http.routers.tautulli-secure.service=tautulli"
+      - "traefik.http.services.tautulli.loadbalancer.server.port=8181"
+
+  overseerr:
+    image: sctx/overseerr
+    container_name: overseerr
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      LOG_LEVEL: debug
+    volumes:
+      - ~/docker/overseerr:/app/config
+    restart: unless-stopped
+    ports:
+      - 5055:5055
+
+  # Wraperr - End of Year Data
+
+  wrapperr:
+    ports:
+      - 8282:8282
+    container_name: wrapperr
+    image: aunefyren/wrapperr:latest
+    restart: unless-stopped
+    volumes:
+      - ~/docker/wrapperr:/app/config
+
+  ############################# MAINTAINANCE
+
+  omadacontroller:
+    container_name: omadacontroller
+    image: mbentley/omada-controller:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ~/docker/omadacontroller/omada-data:/opt/tplink/EAPController/data
+      - ~/docker/omadacontroller/omada-work:/opt/tplink/EAPController/work
+      - ~/docker/omadacontroller/omada-logs:/opt/tplink/EAPController/logs
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.omada.rule=Host(`omada.server.nicholgourlay.com`)"
+      - "traefik.http.routers.omada.entrypoints=http"
+      - "traefik.http.routers.omada-secure.entrypoints=https"
+      - "traefik.http.routers.omada.tls=true"
+      - "traefik.http.services.omada.loadbalancer.server.port=8043"
+      - "traefik.http.services.omada.loadbalancer.server.scheme=https"
+      - "traefik.http.routers.omada.middlewares=omada-middlewares"
+      - "traefik.http.middlewares.omada-middlewares.chain.middlewares=omada-redirect,omada-headers"
+      - "traefik.http.middlewares.omada-headers.headers.customrequestheaders.Host=omada.server.nicholgourlay.com:8043"
+      - "traefik.http.middlewares.omada-headers.headers.customresponseheaders.Host=omada.server.nicholgourlay.com"
+      - "traefik.http.middlewares.omada-redirect.redirectregex.regex=^https:\\/\\/([^\\/]+)\\/?$$"
+      - "traefik.http.middlewares.omada-redirect.redirectregex.replacement=https://$$1/login"
+
+
+  unifi-controller:
+    image: ghcr.io/linuxserver/unifi-controller:latest
+    container_name: unifi-controller
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+    volumes:
+      - ~/docker/unifi:/config
+    ports:
+      - 3479:3478/udp
+      - 10001:10001/udp
+      - 7070:8080
+      - 8443:8443
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.unifi.entrypoints=http"
+      - "traefik.http.routers.unifi.rule=Host(`unifi.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.unifi-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.unifi.middlewares=unifi-https-redirect"
+      - "traefik.http.routers.unifi-secure.entrypoints=https"
+      - "traefik.http.routers.unifi-secure.rule=Host(`unifi.server.nicholgourlay.com`)"
+      - "traefik.http.routers.unifi-secure.tls=true"
+      - "traefik.http.routers.unifi-secure.service=unifi"
+      - "traefik.http.services.unifi.loadbalancer.server.port=8443"
+      - "traefik.http.services.unifi.loadbalancer.server.scheme=https"
+
+  # frigate:
+  #   container_name: frigate
+  #   privileged: true # this may not be necessary for all setups
+  #   restart: unless-stopped
+  #   image: blakeblackshear/frigate:stable
+  #   shm_size: "128mb" # update for your cameras based on calculation above
+  #   volumes:
+  #     - /etc/localtime:/etc/localtime:ro
+  #     - ~/docker/frigate/config:/config
+  #     - ~/docker/frigate/database:/media/frigate/database/
+  #     - /mnt/storage/cameras/frigate:/media/frigate
+  #     - type: tmpfs # Optional: 1GB of memory, reduces SSD/SD Card wear
+  #       target: /tmp/cache
+  #       tmpfs:
+  #         size: 1000000000
+  #   ports:
+  #     - "5005:5000"
+  #     - "1935:1935" # RTMP feeds
+  #   environment:
+  #     FRIGATE_RTSP_PASSWORD: "3ZfP5FbKiaMYTV*e%jvA"
+
+  agentdvr:
+    image: doitandbedone/ispyagentdvr:latest
+    container_name: agentdvr
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    ports:
+      - 8090:8090
+      - 3478:3478/udp
+      - 50000-50010:50000-50010/udp
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/storage/recordings:/recordings
+      - ~/docker/ispyagentdvr/config/:/agent/Media/XML/
+      - ~/docker/ispyagentdvr/media/:/agent/Media/WebServerRoot/Media/
+      - ~/docker/ispyagentdvr/commands:/agent/Commands/
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.agentdvr.entrypoints=http"
+      - "traefik.http.routers.agentdvr.rule=Host(`cameras.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.agentdvr-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.agentdvr.middlewares=agentdvr-https-redirect"
+      - "traefik.http.routers.agentdvr-secure.entrypoints=https"
+      - "traefik.http.routers.agentdvr-secure.rule=Host(`cameras.server.nicholgourlay.com`)"
+      - "traefik.http.routers.agentdvr-secure.tls=true"
+      - "traefik.http.routers.agentdvr-secure.service=agentdvr"
+      - "traefik.http.services.agentdvr.loadbalancer.server.port=8090"
+
+  deepstack:
+    image: deepquestai/deepstack:latest
+    container_name: deepstack
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VISION-DETECTION=True
+    ports:
+      - 5000:5000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/storage/recordings:/recordings
+      - ~/docker/deepstack/:/datastore
+    restart: unless-stopped
+
+  librespeed:
+    image: lscr.io/linuxserver/librespeed:latest
+    container_name: librespeed
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - PASSWORD=PASSWORD
+    volumes:
+      - ~/docker/librespeed:/config
+    ports:
+      - 8030:80
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.librespeed.entrypoints=http"
+      - "traefik.http.routers.librespeed.rule=Host(`speedtest.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.librespeed-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.librespeed.middlewares=librespeed-https-redirect"
+      - "traefik.http.routers.librespeed-secure.entrypoints=https"
+      - "traefik.http.routers.librespeed-secure.rule=Host(`speedtest.server.nicholgourlay.com`)"
+      - "traefik.http.routers.librespeed-secure.tls=true"
+      - "traefik.http.routers.librespeed-secure.service=librespeed"
+      - "traefik.http.services.librespeed.loadbalancer.server.port=80"
+
+  # Book Management
+
+  calibre:
+    image: lscr.io/linuxserver/calibre:latest
+    container_name: calibre
+    volumes:
+      - ~/docker/calibre:/config
+      - /mnt/storage/books:/books
+    ports:
+      - 6080:8080
+      - 6081:8081
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.calibre.entrypoints=http"
+      - "traefik.http.routers.calibre.rule=Host(`calibre.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.calibre-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.calibre.middlewares=calibre-https-redirect"
+      - "traefik.http.routers.calibre-secure.entrypoints=https"
+      - "traefik.http.routers.calibre-secure.rule=Host(`calibre.server.nicholgourlay.com`)"
+      - "traefik.http.routers.calibre-secure.tls=true"
+      - "traefik.http.routers.calibre-secure.service=calibre"
+      - "traefik.http.services.calibre.loadbalancer.server.port=8080"
+
+  readarr:
+    image: lscr.io/linuxserver/readarr:develop
+    container_name: readarr
+    volumes:
+      - ~/docker/readerr:/config
+      - /mnt/storage/downloads/completed/books:/downloads
+      - /mnt/storage/books:/books
+      - /mnt/storage/audiobooks:/audiobooks
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    ports:
+      - 8787:8787
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.readarr.entrypoints=http"
+      - "traefik.http.routers.readarr.rule=Host(`readarr.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.readarr-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.readarr.middlewares=readarr-https-redirect"
+      - "traefik.http.routers.readarr-secure.entrypoints=https"
+      - "traefik.http.routers.readarr-secure.rule=Host(`readarr.server.nicholgourlay.com`)"
+      - "traefik.http.routers.readarr-secure.tls=true"
+      - "traefik.http.routers.readarr-secure.service=readarr"
+      - "traefik.http.services.readarr.loadbalancer.server.port=8787"
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    ports:
+      - 13378:80
+    volumes:
+      - /mnt/storage/audiobooks:/audiobooks
+      - /mnt/storage/audiobooks:/podcasts
+      - ~/docker/audiobookshelf:/config
+      - ~/docker/audiobookshelf/metadata:/metadata
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audiobookshelf.entrypoints=http"
+      - "traefik.http.routers.audiobookshelf.rule=Host(`audiobookshelf.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.audiobookshelf-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.audiobookshelf.middlewares=audiobookshelf-https-redirect"
+      - "traefik.http.routers.audiobookshelf-secure.entrypoints=https"
+      - "traefik.http.routers.audiobookshelf-secure.rule=Host(`audiobookshelf.server.nicholgourlay.com`)"
+      - "traefik.http.routers.audiobookshelf-secure.tls=true"
+      - "traefik.http.routers.audiobookshelf-secure.service=audiobookshelf"
+      - "traefik.http.services.audiobookshelf.loadbalancer.server.port=80"
+
+  ############################# MAINTAINANCE
+
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: tailscale
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+    volumes:
+      - ~/docker/tailscale:/var/lib
+      - /dev/net/tun:/dev/net/tun
+    cap_add: # Required for tailscale to work
+      - net_admin
+      - sys_module
+    command: tailscaled
+    privileged: true
+    restart: unless-stopped
+    network_mode: host
+
+  cloudflaretunnel:
+    container_name: cloudflaretunnel
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    network_mode: host
+
+  ittools:
+    image: 'corentinth/it-tools:latest'
+    ports:
+        - '8085:80'
+    restart: unless-stopped
+    container_name: ittools
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ittools.entrypoints=http"
+      - "traefik.http.routers.ittools.rule=Host(`ittools.server.nicholgourlay.com`)"
+      - "traefik.http.middlewares.ittools-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.ittools.middlewares=ittools-https-redirect"
+      - "traefik.http.routers.ittools-secure.entrypoints=https"
+      - "traefik.http.routers.ittools-secure.rule=Host(`ittools.server.nicholgourlay.com`)"
+      - "traefik.http.routers.ittools-secure.tls=true"
+      - "traefik.http.routers.ittools-secure.service=ittools"
+      - "traefik.http.services.ittools.loadbalancer.server.port=80"
